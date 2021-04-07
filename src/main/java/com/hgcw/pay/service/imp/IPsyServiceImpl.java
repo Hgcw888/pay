@@ -1,10 +1,14 @@
 package com.hgcw.pay.service.imp;
 
 import com.hgcw.pay.config.BestPayConfig;
+import com.hgcw.pay.dao.PayInfoMapper;
+import com.hgcw.pay.enums.PayPlatformEnum;
+import com.hgcw.pay.pojo.PayInfo;
 import com.hgcw.pay.service.IPsyService;
 import com.lly835.bestpay.config.WxPayConfig;
 import com.lly835.bestpay.enums.BestPayPlatformEnum;
 import com.lly835.bestpay.enums.BestPayTypeEnum;
+import com.lly835.bestpay.enums.OrderStatusEnum;
 import com.lly835.bestpay.model.PayRequest;
 import com.lly835.bestpay.model.PayResponse;
 import com.lly835.bestpay.service.BestPayService;
@@ -24,6 +28,8 @@ import java.math.BigDecimal;
 public class IPsyServiceImpl implements IPsyService {
     @Autowired
     private BestPayService bestPayService;
+    @Autowired
+    private PayInfoMapper payInfoMapper;
 
     /**
      * 发起支付
@@ -33,6 +39,13 @@ public class IPsyServiceImpl implements IPsyService {
      */
     @Override
     public PayResponse create(String orderId, BigDecimal amount, BestPayTypeEnum bestPayTypeEnum) {
+        /**
+         * 订单写入数据库
+         */
+        PayInfo payInfo = new PayInfo(Long.parseLong(orderId), PayPlatformEnum.getByBestPayTypeEnum(bestPayTypeEnum).getCode(),
+                OrderStatusEnum.NOTPAY.name(), amount);
+
+        payInfoMapper.insertSelective(payInfo);
 
 
         /**
@@ -70,10 +83,22 @@ public class IPsyServiceImpl implements IPsyService {
         /**
          * 金额校验（丛数据库擦寻订单）
          */
+        PayInfo payInfo = payInfoMapper.selectByOrderNo(Long.parseLong(response.getOrderId()));
+        if (payInfo == null) {
+            throw new RuntimeException("通过orderNo查询到的结果是null");
+        }
+        if (!payInfo.getPlatformStatus().equals(OrderStatusEnum.SUCCESS.name())) {
+            //compareTo -1(小于) 0（等于） 1（大于）
+            if (payInfo.getPayAmount().compareTo(BigDecimal.valueOf(response.getOrderAmount()))!=0) {
+                throw new RuntimeException("异步通知中的金额和数据库中的金额不一致，orderAmount={}"+response.getOrderId());
+            }
 
-        /**
-         * 修改订单支付状态
-         */
+            /**
+             * 修改订单支付状态
+             */
+            payInfo.setPlatformStatus(OrderStatusEnum.SUCCESS.name());
+            payInfoMapper.updateByPrimaryKeySelective(payInfo);
+        }
 
         /**
          * 不要重复请求
